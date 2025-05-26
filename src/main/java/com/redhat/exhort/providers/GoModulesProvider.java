@@ -48,11 +48,12 @@ import java.util.stream.Collectors;
 public final class GoModulesProvider extends Provider {
 
   public static final String PROP_EXHORT_GO_MVS_LOGIC_ENABLED = "EXHORT_GO_MVS_LOGIC_ENABLED";
-  private Logger log = LoggersFactory.getLogger(this.getClass().getName());
+  private final Logger log = LoggersFactory.getLogger(this.getClass().getName());
   private static final String GO_HOST_ARCHITECTURE_ENV_NAME = "GOHOSTARCH";
   private static final String GO_HOST_OPERATION_SYSTEM_ENV_NAME = "GOHOSTOS";
   public static final String DEFAULT_MAIN_VERSION = "v0.0.0";
   private final TreeMap<String, String> goEnvironmentVariableForPurl;
+  private final String goExecutable;
 
   public String getMainModuleVersion() {
     return mainModuleVersion;
@@ -64,6 +65,11 @@ public final class GoModulesProvider extends Provider {
     super(Type.GOLANG, manifest);
     this.goEnvironmentVariableForPurl = getQualifiers(true);
     this.mainModuleVersion = getDefaultMainModuleVersion();
+    try {
+      this.goExecutable = getExecutable("go");
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to find Go executable file", e);
+    }
   }
 
   @Override
@@ -86,6 +92,27 @@ public final class GoModulesProvider extends Provider {
     var sbom = getDependenciesSbom(manifest, false);
     return new Content(
         sbom.getAsJsonString().getBytes(StandardCharsets.UTF_8), Api.CYCLONEDX_MEDIA_TYPE);
+  }
+
+  @Override
+  protected String getExecutable(String command) throws IOException {
+    String goExecutable = Operations.getCustomPathOrElse(command);
+    try {
+      Process process =
+          new ProcessBuilder(goExecutable, "version").redirectErrorStream(true).start();
+      int exitCode = process.waitFor();
+      if (exitCode != 0) {
+        throw new IOException("Go executable found, but it exited with error code " + exitCode);
+      }
+    } catch (IOException | InterruptedException e) {
+      throw new IOException(
+          String.format(
+              "Unable to find or run Go executable '%s'. Please ensure Go is installed and"
+                  + " available in your PATH.",
+              goExecutable),
+          e);
+    }
+    return goExecutable;
   }
 
   private PackageURL toPurl(
@@ -319,9 +346,9 @@ public final class GoModulesProvider extends Provider {
 
   private Map<String, List<String>> getFinalPackagesVersionsForModule(
       Map<String, List<String>> edges, Path manifestPath) {
-    Operations.runProcessGetOutput(manifestPath.getParent(), "go", "mod", "download");
+    Operations.runProcessGetOutput(manifestPath.getParent(), goExecutable, "mod", "download");
     String finalVersionsForAllModules =
-        Operations.runProcessGetOutput(manifestPath.getParent(), "go", "list", "-m", "all");
+        Operations.runProcessGetOutput(manifestPath.getParent(), goExecutable, "list", "-m", "all");
     Map<String, String> finalModulesVersions =
         Arrays.stream(finalVersionsForAllModules.split(System.lineSeparator()))
             .filter(string -> string.trim().split(" ").length == 2)
@@ -378,11 +405,10 @@ public final class GoModulesProvider extends Provider {
         .collect(Collectors.toList());
   }
 
-  private static TreeMap<String, String> getQualifiers(boolean includeOsAndArch) {
+  private TreeMap<String, String> getQualifiers(boolean includeOsAndArch) {
 
     if (includeOsAndArch) {
-      var go = Operations.getCustomPathOrElse("go");
-      String goEnvironmentVariables = Operations.runProcessGetOutput(null, go, "env");
+      String goEnvironmentVariables = Operations.runProcessGetOutput(null, goExecutable, "env");
       String hostArch =
           getEnvironmentVariable(goEnvironmentVariables, GO_HOST_ARCHITECTURE_ENV_NAME);
       String hostOS =
@@ -405,9 +431,8 @@ public final class GoModulesProvider extends Provider {
 
   private String buildGoModulesDependencies(Path manifestPath)
       throws JsonMappingException, JsonProcessingException {
-    var go = Operations.getCustomPathOrElse("go");
     String[] goModulesDeps;
-    goModulesDeps = new String[] {go, "mod", "graph"};
+    goModulesDeps = new String[] {goExecutable, "mod", "graph"};
 
     // execute the clean command
     String goModulesOutput =

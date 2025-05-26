@@ -60,9 +60,9 @@ public abstract class JavaScriptProvider extends Provider {
 
   public JavaScriptProvider(Path manifest, Ecosystem.Type ecosystem, String cmd) {
     super(ecosystem, manifest);
-    this.cmd = Operations.getCustomPathOrElse(cmd);
     try {
       this.manifest = new Manifest(manifest);
+      this.cmd = getExecutable(cmd);
     } catch (IOException e) {
       throw new RuntimeException("Unable to process package.json file", e);
     }
@@ -281,4 +281,29 @@ public abstract class JavaScriptProvider extends Provider {
               packageManager()));
     }
   }
+
+  @Override
+  protected String getExecutable(String command) throws IOException {
+    String cmdExecutable = Operations.getCustomPathOrElse(command);
+    try {
+      Process process = new ProcessBuilder(cmdExecutable, "-v").redirectErrorStream(true).start();
+      int exitCode = process.waitFor();
+      if (exitCode != 0) {
+        throw new IOException(
+            command + " executable found, but it exited with error code " + exitCode);
+      }
+    } catch (IOException | InterruptedException e) {
+      throw new IOException(
+          String.format(
+              "Unable to find or run "
+                  + command
+                  + " executable '%s'. Please ensure "
+                  + command
+                  + " is installed and available in your PATH.",
+              cmdExecutable),
+          e);
+    }
+    return cmdExecutable;
+  }
+  ;
 }

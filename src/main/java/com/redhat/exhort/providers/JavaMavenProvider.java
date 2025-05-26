@@ -51,18 +51,23 @@ import javax.xml.stream.XMLStreamReader;
 public final class JavaMavenProvider extends BaseJavaProvider {
 
   private static final String PROP_JAVA_HOME = "JAVA_HOME";
-  private Logger log = LoggersFactory.getLogger(this.getClass().getName());
+  private final Logger log = LoggersFactory.getLogger(this.getClass().getName());
+  private final String mvnExecutable;
 
   public JavaMavenProvider(Path manifest) {
     super(Type.MAVEN, manifest);
+    // check for custom mvn executable
+    try {
+      this.mvnExecutable = getExecutable("mvn");
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to find Maven executable file", e);
+    }
   }
 
   @Override
   public Content provideStack() throws IOException {
-    // check for custom mvn executable
-    var mvn = Operations.getCustomPathOrElse("mvn");
     // clean command used to clean build target
-    var mvnCleanCmd = new String[] {mvn, "clean", "-f", manifest.toString()};
+    var mvnCleanCmd = new String[] {mvnExecutable, "clean", "-f", manifest.toString()};
     var mvnEnvs = getMvnExecEnvs();
     // execute the clean command
     Operations.runProcess(mvnCleanCmd, mvnEnvs);
@@ -72,7 +77,7 @@ public final class JavaMavenProvider extends BaseJavaProvider {
     var mvnTreeCmd =
         new ArrayList<String>() {
           {
-            add(mvn);
+            add(mvnExecutable);
             add("org.apache.maven.plugins:maven-dependency-plugin:3.6.0:tree");
             add("-Dverbose");
             add("-DoutputType=text");
@@ -125,12 +130,10 @@ public final class JavaMavenProvider extends BaseJavaProvider {
   }
 
   private Content generateSbomFromEffectivePom() throws IOException {
-    // check for custom mvn executable
-    var mvn = Operations.getCustomPathOrElse("mvn");
     var tmpEffPom = Files.createTempFile("exhort_eff_pom_", ".xml");
     var mvnEffPomCmd =
         new String[] {
-          mvn,
+          mvnExecutable,
           "clean",
           "help:effective-pom",
           String.format("-Doutput=%s", tmpEffPom.toString()),
@@ -324,7 +327,7 @@ public final class JavaMavenProvider extends BaseJavaProvider {
     /**
      * Get the string representation of the dependency to use as excludes
      *
-     * @return an exclude string for the dependency:tree plugin, ie. group-id:artifact-id:*:version
+     * @return an exclude string for the dependency:tree plugin, i.e. group-id:artifact-id:*:version
      */
     @Override
     public String toString() {
@@ -347,7 +350,7 @@ public final class JavaMavenProvider extends BaseJavaProvider {
             groupId,
             artifactId,
             version,
-            this.scope == "*" ? null : new TreeMap<>(Map.of("scope", this.scope)),
+            this.scope.equals("*") ? null : new TreeMap<>(Map.of("scope", this.scope)),
             null);
       } catch (MalformedPackageURLException e) {
         throw new IllegalArgumentException("Unable to parse PackageURL", e);
@@ -371,5 +374,25 @@ public final class JavaMavenProvider extends BaseJavaProvider {
     public int hashCode() {
       return Objects.hash(groupId, artifactId, version);
     }
+  }
+
+  @Override
+  protected String getExecutable(String command) throws IOException {
+    String mvnExecutable = Operations.getCustomPathOrElse(command);
+    try {
+      Process process = new ProcessBuilder(mvnExecutable, "-v").redirectErrorStream(true).start();
+      int exitCode = process.waitFor();
+      if (exitCode != 0) {
+        throw new IOException("Maven executable found, but it exited with error code " + exitCode);
+      }
+    } catch (IOException | InterruptedException e) {
+      throw new IOException(
+          String.format(
+              "Unable to find or run Maven executable '%s'. Please ensure Maven is installed and"
+                  + " available in your PATH.",
+              mvnExecutable),
+          e);
+    }
+    return mvnExecutable;
   }
 }

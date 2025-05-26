@@ -78,4 +78,16 @@ public abstract class Provider {
   public void validateLockFile(Path lockFileDir) {
     // Default implementation. Do not require a lock file.
   }
+
+  /**
+   * Returns the name or path of the executable used by this provider (e.g., "mvn" or "gradle").
+   *
+   * <p>Implementations should resolve the appropriate executable name or its full path, possibly by
+   * checking environment variables, configuration files, or defaulting to standard command names.
+   *
+   * @param command the command name
+   * @return the resolved executable name or full path as a {@code String}
+   * @throws IOException if the executable cannot be found, resolved, or is not accessible
+   */
+  protected abstract String getExecutable(String command) throws IOException;
 }

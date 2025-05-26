@@ -29,7 +29,12 @@ import com.redhat.exhort.tools.Operations;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -49,10 +54,17 @@ public final class GradleProvider extends BaseJavaProvider {
   public static final String[] COMPONENT_ANALYSIS_CONFIGURATIONS = {
     "api", "implementation", "compileOnlyApi", "compileOnly", "runtimeOnly"
   };
-  private Logger log = LoggersFactory.getLogger(this.getClass().getName());
+  private final Logger log = LoggersFactory.getLogger(this.getClass().getName());
+
+  private final String gradleExecutable;
 
   public GradleProvider(Path manifest) {
     super(Type.GRADLE, manifest);
+    try {
+      this.gradleExecutable = getExecutable("gradle");
+    } catch (IOException e) {
+      throw new RuntimeException("Unable to find Gradle executable file", e);
+    }
   }
 
   @Override
@@ -213,12 +225,10 @@ public final class GradleProvider extends BaseJavaProvider {
   }
 
   private Path getDependencies(Path manifestPath) throws IOException {
-    // check for custom gradle executable
-    var gradle = Operations.getCustomPathOrElse("gradle");
     // create a temp file for storing the dependency tree in
     var tempFile = Files.createTempFile("exhort_graph_", null);
     // the command will create the dependency tree in the temp file
-    String gradleCommand = gradle + " dependencies";
+    String gradleCommand = gradleExecutable + " dependencies";
 
     String[] cmdList = gradleCommand.split("\\s+");
     String gradleOutput =
@@ -228,10 +238,9 @@ public final class GradleProvider extends BaseJavaProvider {
     return tempFile;
   }
 
-  private Path getProperties(Path manifestPath) throws IOException {
+  protected Path getProperties(Path manifestPath) throws IOException {
     Path propsTempFile = Files.createTempFile("propsfile", ".txt");
-    var gradle = Operations.getCustomPathOrElse("gradle");
-    String propCmd = gradle + " properties";
+    String propCmd = gradleExecutable + " properties";
     String[] propCmdList = propCmd.split("\\s+");
     String properties =
         Operations.runProcessGetOutput(Path.of(manifestPath.getParent().toString()), propCmdList);
@@ -473,5 +482,26 @@ public final class GradleProvider extends BaseJavaProvider {
 
     return new Content(
         sbom.filterIgnoredDeps(ignored).getAsJsonString().getBytes(), Api.CYCLONEDX_MEDIA_TYPE);
+  }
+
+  @Override
+  protected String getExecutable(String command) throws IOException {
+    String gradleExecutable = Operations.getCustomPathOrElse(command);
+    try {
+      Process process =
+          new ProcessBuilder(gradleExecutable, "--version").redirectErrorStream(true).start();
+      int exitCode = process.waitFor();
+      if (exitCode != 0) {
+        throw new IOException("Gradle executable found, but it exited with error code " + exitCode);
+      }
+    } catch (IOException | InterruptedException e) {
+      throw new IOException(
+          String.format(
+              "Unable to find or run Gradle executable '%s'. Please ensure Gradle is installed and"
+                  + " available in your PATH.",
+              gradleExecutable),
+          e);
+    }
+    return gradleExecutable;
   }
 }
